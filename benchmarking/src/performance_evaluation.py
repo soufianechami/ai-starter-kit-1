@@ -31,7 +31,7 @@ from benchmarking.src.llmperf import common_metrics
 from benchmarking.src.llmperf.llmperf_utils import LLMPerfResults, flatten
 from benchmarking.src.llmperf.models import LLMResponse, RequestConfig
 from benchmarking.src.llmperf.sambanova_client import llm_request
-from benchmarking.utils import CONFIG_PATH
+from benchmarking.utils import CONFIG_PATH, SAMBANOVA_API_BASE
 
 logging.basicConfig(
     level=logging.INFO,
@@ -85,6 +85,13 @@ class BasePerformanceEvaluator(abc.ABC):
         self.ui_progress_bar = None
         self.cli_progress_bar = None
         self.run_uuid = uuid.uuid4()
+        
+        # Determine actual endpoint
+        if self.api_variables and self.api_variables.get('SAMBANOVA_API_BASE'):
+            self.actual_endpoint = self.api_variables['SAMBANOVA_API_BASE']
+        else:
+            # Check both SAMBANOVA_API_BASE and SAMBANOVA_BASE_URL (often used interchangeably in .env)
+            self.actual_endpoint = os.environ.get('SAMBANOVA_API_BASE', os.environ.get('SAMBANOVA_BASE_URL', SAMBANOVA_API_BASE))
 
         # To be set upon saving of results
         self.summary_file_path: Optional[str] = None
@@ -229,6 +236,10 @@ class BasePerformanceEvaluator(abc.ABC):
         """
         # Create empty metrics summary to be filled and returned
         metrics_summary: Dict[str, Any] = {}
+
+        # Save original setting and suppress verbose vertical logging
+        original_show_results = self.show_results_in_terminal
+        self.show_results_in_terminal = False
 
         # Create base df from metrics returned from request responses
         raw_df = pd.DataFrame(metrics)
@@ -394,6 +405,114 @@ class BasePerformanceEvaluator(abc.ABC):
 
         metrics_summary[common_metrics.NUM_COMPLETED_REQUESTS] = num_completed_requests
         metrics_summary[common_metrics.COMPLETED_REQUESTS_PER_MIN] = num_completed_requests_per_min
+
+        # Restore original setting
+        self.show_results_in_terminal = original_show_results
+
+        if self.show_results_in_terminal:
+            print()
+            
+            iss_mean = metrics_summary.get(common_metrics.NUM_INPUT_TOKENS, {}).get('mean', 0)
+            oss_mean = metrics_summary.get(common_metrics.NUM_OUTPUT_TOKENS, {}).get('mean', 0)
+            
+            def format_k(val):
+                if val >= 1000 and val % 1000 == 0:
+                    return f"{int(val/1000)}k"
+                elif val >= 1000:
+                    return f"{val/1000:.1f}k"
+                return str(int(val))
+
+            def print_summary_row(label, value):
+                text = f" {label}: {value}"
+                print("│" + f"{text:<48}" + "│")
+
+            print("┌" + "─"*48 + "┐")
+            print("│" + f"{'Benchmark Configuration':^48}" + "│")
+            print("├" + "─"*48 + "┤")
+            print_summary_row("Model Name", self.model_name)
+            print_summary_row("Endpoint", self.actual_endpoint)
+            print_summary_row("Total Requests", metrics_summary.get(common_metrics.NUM_COMPLETED_REQUESTS, 0))
+            print_summary_row("Concurrency", self.num_concurrent_requests or 'N/A')
+            print_summary_row("ISS", format_k(iss_mean))
+            print_summary_row("OSS", format_k(oss_mean))
+            print("└" + "─"*48 + "┘")
+            print()
+            
+            def print_table(title, metrics_map, single_metrics_map=None):
+                print(f"{title:^156}")
+                print("┌" + "─"*46 + ("┬" + "─"*11)*9 + "┐")
+                print("│" + f"{'Metric':>45} " + "│" + f"{'avg':>10} " + "│" + f"{'p50':>10} " + "│" + f"{'p75':>10} " + "│" + f"{'p90':>10} " + "│" + f"{'p95':>10} " + "│" + f"{'p99':>10} " + "│" + f"{'min':>10} " + "│" + f"{'max':>10} " + "│" + f"{'std':>10} " + "│")
+                print("├" + "─"*46 + ("┼" + "─"*11)*9 + "┤")
+                
+                for k, name in metrics_map.items():
+                    if k in metrics_summary and isinstance(metrics_summary[k], dict) and 'mean' in metrics_summary[k]:
+                        m = metrics_summary[k]
+                        avg = float(m.get('mean', 0))
+                        p50 = float(m.get('quantiles', {}).get('p50', 0))
+                        p75 = float(m.get('quantiles', {}).get('p75', 0))
+                        p90 = float(m.get('quantiles', {}).get('p90', 0))
+                        p95 = float(m.get('quantiles', {}).get('p95', 0))
+                        p99 = float(m.get('quantiles', {}).get('p99', 0))
+                        min_v = float(m.get('min', 0))
+                        max_v = float(m.get('max', 0))
+                        std = float(m.get('stddev', 0))
+                        
+                        if k in [common_metrics.NUM_INPUT_TOKENS, common_metrics.NUM_OUTPUT_TOKENS, common_metrics.NUM_INPUT_TOKENS_SERVER, common_metrics.NUM_OUTPUT_TOKENS_SERVER]:
+                            print("│" + f"{name:>45} " + "│" + f"{int(avg):>10,} " + "│" + f"{int(p50):>10,} " + "│" + f"{int(p75):>10,} " + "│" + f"{int(p90):>10,} " + "│" + f"{int(p95):>10,} " + "│" + f"{int(p99):>10,} " + "│" + f"{int(min_v):>10,} " + "│" + f"{int(max_v):>10,} " + "│" + f"{int(std):>10,} " + "│")
+                        else:
+                            print("│" + f"{name:>45} " + "│" + f"{avg:>10,.4f} " + "│" + f"{p50:>10,.4f} " + "│" + f"{p75:>10,.4f} " + "│" + f"{p90:>10,.4f} " + "│" + f"{p95:>10,.4f} " + "│" + f"{p99:>10,.4f} " + "│" + f"{min_v:>10,.4f} " + "│" + f"{max_v:>10,.4f} " + "│" + f"{std:>10,.4f} " + "│")
+                
+                if single_metrics_map:
+                    print("├" + "─"*46 + ("┼" + "─"*11)*9 + "┤")
+                    for k, name in single_metrics_map:
+                        val = metrics_summary.get(k, 0)
+                        val_str = f"{val:,.4f}" if isinstance(val, float) else f"{val:,}"
+                        print("│" + f"{name:>45} " + "│" + f"{val_str:>10} " + "│" + f"{'N/A':>10} " + "│" + f"{'N/A':>10} " + "│" + f"{'N/A':>10} " + "│" + f"{'N/A':>10} " + "│" + f"{'N/A':>10} " + "│" + f"{'N/A':>10} " + "│" + f"{'N/A':>10} " + "│" + f"{'N/A':>10} " + "│")
+                
+                print("└" + "─"*46 + ("┴" + "─"*11)*9 + "┘")
+                print()
+
+            client_display_map = {
+                common_metrics.TTFT: 'Time to First Token (s)',
+                common_metrics.E2E_LAT: 'Request Latency (s)',
+                common_metrics.MEAN_INTER_TOKEN_LATENCY: 'Inter Token Latency (s)',
+                common_metrics.REQ_OUTPUT_THROUGHPUT: 'Output Token Throughput (tokens/s)',
+                common_metrics.NUM_OUTPUT_TOKENS: 'Output Sequence Length (tokens)',
+                common_metrics.NUM_INPUT_TOKENS: 'Input Sequence Length (tokens)',
+            }
+
+            server_display_map = {
+                common_metrics.TTFT_SERVER: 'Server Time to First Token (s)',
+                common_metrics.E2E_LAT_SERVER: 'Server Request Latency (s)',
+                common_metrics.REQ_OUTPUT_THROUGHPUT_SERVER: 'Server Output Token Throughput (tokens/s)',
+                common_metrics.REQ_OUTPUT_THROUGHPUT_SERVER_FIRST_TEN: 'Server Output Tput (first 10 tokens)',
+                common_metrics.NUM_OUTPUT_TOKENS_SERVER: 'Server Output Sequence Length (tokens)',
+                common_metrics.NUM_INPUT_TOKENS_SERVER: 'Server Input Sequence Length (tokens)',
+            }
+
+            print_table('SambaNova AI | Client Metrics', client_display_map)
+            print_table('SambaNova AI | Server Metrics', server_display_map)
+
+            duration = end_time - start_time
+            duration_mins = int(duration // 60)
+            duration_secs = int(duration % 60)
+            duration_ms = int((duration * 1000) % 1000)
+            duration_str = f"{duration_mins:02d}:{duration_secs:02d}.{duration_ms:03d}"
+
+            rpm = metrics_summary.get(common_metrics.COMPLETED_REQUESTS_PER_MIN, 0)
+            overall_tput = metrics_summary.get(common_metrics.OUTPUT_THROUGHPUT, 0)
+            mean_tput = metrics_summary.get(common_metrics.MEAN_OUTPUT_THROUGHPUT, 0)
+            err_rate = metrics_summary.get(common_metrics.ERROR_RATE, 0)
+            err_count = metrics_summary.get(common_metrics.NUM_ERRORS, 0)
+            err_freq = metrics_summary.get(common_metrics.ERROR_CODE_FREQ, "{}")
+
+            print("┌" + "─"*154 + "┐")
+            line1 = f" Duration: {duration_str} │ Actual RPM: {rpm:,.4f} request/min │ Overall Output Throughput (tokens/s): {overall_tput:,.4f} │ Mean Output Throughput (tokens/s): {mean_tput:,.4f} "
+            line2 = f" Error Rate: {err_rate:.2%} │ Number of Errors: {err_count} │ Error Code Frequency: {err_freq} "
+            print("│" + f"{line1:^154}" + "│")
+            print("│" + f"{line2:^154}" + "│")
+            print("└" + "─"*154 + "┘")
+            print()
 
         return metrics_summary
 

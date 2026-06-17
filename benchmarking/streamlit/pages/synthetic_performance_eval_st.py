@@ -430,7 +430,7 @@ def main() -> None:
         st.session_state.input_tokens = st.number_input(
             'Number of input tokens',
             min_value=50,
-            max_value=10000,
+            max_value=100000,
             value=1000,
             step=1,
             disabled=st.session_state.running or st.session_state.optional_download,

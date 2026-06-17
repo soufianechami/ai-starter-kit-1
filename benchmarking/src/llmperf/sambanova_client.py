@@ -268,12 +268,12 @@ class SambaNovaCloudAPI(BaseAPIEndpoint):
         if self.request_config.api_variables:
             self.base_url = (
                 self.request_config.api_variables['SAMBANOVA_API_BASE']
-                if self.request_config.api_variables['SAMBANOVA_API_BASE']
+                if self.request_config.api_variables.get('SAMBANOVA_API_BASE')
                 else SAMBANOVA_API_BASE
             )
             self.api_key = self.request_config.api_variables['SAMBANOVA_API_KEY']
         else:
-            self.base_url = os.environ.get('SAMBANOVA_API_BASE', SAMBANOVA_API_BASE)
+            self.base_url = os.environ.get('SAMBANOVA_API_BASE', os.environ.get('SAMBANOVA_BASE_URL', SAMBANOVA_API_BASE))
             self.api_key = os.environ.get('SAMBANOVA_API_KEY', '')
 
     def _get_url(self) -> str:
