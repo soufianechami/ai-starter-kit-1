@@ -500,6 +500,7 @@ class BasePerformanceEvaluator(abc.ABC):
             duration_str = f"{duration_mins:02d}:{duration_secs:02d}.{duration_ms:03d}"
 
             rpm = metrics_summary.get(common_metrics.COMPLETED_REQUESTS_PER_MIN, 0)
+            qps_actual = rpm / 60.0 if rpm else 0
             overall_tput = metrics_summary.get(common_metrics.OUTPUT_THROUGHPUT, 0)
             mean_tput = metrics_summary.get(common_metrics.MEAN_OUTPUT_THROUGHPUT, 0)
             err_rate = metrics_summary.get(common_metrics.ERROR_RATE, 0)
@@ -507,7 +508,7 @@ class BasePerformanceEvaluator(abc.ABC):
             err_freq = metrics_summary.get(common_metrics.ERROR_CODE_FREQ, "{}")
 
             print("┌" + "─"*154 + "┐")
-            line1 = f" Duration: {duration_str} │ Actual RPM: {rpm:,.4f} request/min │ Overall Output Throughput (tokens/s): {overall_tput:,.4f} │ Mean Output Throughput (tokens/s): {mean_tput:,.4f} "
+            line1 = f" Duration: {duration_str} │ Actual QPS: {qps_actual:,.4f} req/s │ Actual RPM: {rpm:,.4f} request/min │ Overall Output Throughput (tokens/s): {overall_tput:,.4f} │ Mean Output Throughput (tokens/s): {mean_tput:,.4f} "
             line2 = f" Error Rate: {err_rate:.2%} │ Number of Errors: {err_count} │ Error Code Frequency: {err_freq} "
             print("│" + f"{line1:^154}" + "│")
             print("│" + f"{line2:^154}" + "│")
